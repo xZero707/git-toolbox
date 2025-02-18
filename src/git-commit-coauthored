@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+
+is_git_repository() {
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        return 1
+    fi
+
+    return 0
+}
+
+validate_file() {
+    local file="${1:?}"
+
+    if [[ ! -f ${file} ]]; then
+        printf "git: Error occurred. '%s' file is missing\n" "${file}" >&2
+        return 3
+    fi
+
+    if [[ ! -s ${file} ]]; then
+        printf "git: Error occurred. '%s' file is empty\n" "${file}" >&2
+        return 3
+    fi
+
+    return 0
+}
+
+is_file_stale() {
+    local file="${1:?}"
+    local mod_time
+    local current_date
+
+    mod_time=$(date -r "${file}" "+%Y%m%d")
+    current_date=$(date "+%Y%m%d")
+
+    if [[ ${mod_time} != "${current_date}" ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+is_expression_format_valid() {
+    local expression="${1:?EXPRESSION is required}"
+    if echo "${expression}" | grep -Pq '^[\w\s\.\-]* <.*>$'; then
+        return 0
+    fi
+
+    return 1
+}
+
+main() {
+    if ! is_git_repository; then
+        printf "fatal: not a git repository (or any parent up to mount point /)\n" >&2
+        printf "Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\n" >&2
+        return 128
+    fi
+
+    local co_authors_file=".coauthors"
+
+    validate_file "${co_authors_file}" || return 1
+
+    # This should help avoid stale co-authors file
+    # Pair-programming sessions can last for days, so this is not a perfect solution, but should help from accidentally committing with stale co-authors
+    if is_file_stale "${co_authors_file}"; then
+        printf "git: Warning: The file '%s' has not been modified today, and it's potentially stale.\n" "${co_authors_file}"
+        printf "Continuing in 10 seconds. Press Ctrl+C to abort.\n"
+        sleep 10
+    fi
+
+    local co_authors=""
+    while IFS= read -r co_author; do
+        if [[ -z ${co_author} ]]; then
+            continue
+        fi
+
+        if is_expression_format_valid "${co_author}"; then
+            printf "> Author added %s\n" "${co_author}"
+            co_authors+="Co-authored-by: ${co_author}"$'\n'
+            continue
+        fi
+
+        printf "git: Error occurred. Invalid author format in '%s'\n" "${co_authors_file}" >&2
+        printf " Got: %s\n Expected: Name <email>\n" "${co_author}" >&2
+        return 5
+    done <"${co_authors_file}"
+
+    git commit "${@}" -m "" -m "${co_authors}"
+    return $?
+}
+
+main "${@}"
+exit $?
