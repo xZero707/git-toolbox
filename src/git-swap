@@ -1,0 +1,108 @@
+#!/usr/bin/env sh
+
+# FIXME: Currently broken
+
+set -eu
+
+doBranchSwap() {
+    local currentBranch="${1:-}"
+    local targetBranch="${2:-}"
+    echo "> Branch swap '${currentBranch}' -> '${targetBranch}'"
+
+    git checkout "${targetBranch}"
+}
+
+loadMemory() {
+    local key="com.n0rthernl1ghts.branch_swap.last"
+    git config --get "${key}" || echo ''
+}
+
+updateMemory() {
+    local value="${1:-}"
+    local key="com.n0rthernl1ghts.branch_swap.last"
+
+    if [ "${value}" = "null" ]; then
+        git config --unset "${key}"
+        return 0
+    fi
+
+    git config "${key}" "${value}"
+}
+
+gitGetCurrentBranch() {
+    git rev-parse --abbrev-ref HEAD
+}
+
+isGitRepo() {
+    git rev-parse --is-inside-work-tree >>/dev/null
+}
+
+main() {
+    # If not .git repo, error will be shown and script will exit with error code 1
+    if ! isGitRepo; then
+        return 1
+    fi
+
+    local targetBranch="${1:-}"
+    local memorizedBranch
+    memorizedBranch="$(loadMemory)"
+
+    if [ "${targetBranch}" = "--view" ]; then
+        if [ -n "${memorizedBranch}" ]; then
+            echo "${memorizedBranch}"
+            return 0
+        fi
+        echo "> Error: No previous branch"
+        return 1
+    fi
+
+    if [ "${targetBranch}" = "--clear" ]; then
+        echo "> Branch swap memory cleared"
+        updateMemory "null"
+        return 0
+    fi
+
+    local currentBranch
+    currentBranch="$(gitGetCurrentBranch)"
+
+    if [ "${currentBranch}" = "${targetBranch}" ]; then
+        echo "> Error: Target and current branch cannot be the same"
+        return 1
+    fi
+
+    if [ -n "${targetBranch}" ]; then
+        doBranchSwap "${currentBranch}" "${targetBranch}"
+        return
+    fi
+
+
+    if [ -n "${memorizedBranch}" ]; then
+        echo "> Branch swap memory: ${memorizedBranch}"
+        doBranchSwap "${currentBranch}" "${memorizedBranch}"
+        return
+    fi
+
+    if [ -z "${targetBranch}" ]; then
+        if [ -z "${memorizedBranch}" ]; then
+            echo "> Error: The target branch is unknown"
+            return 1
+        fi
+
+        targetBranch="${memorizedBranch}"
+
+        if [ -z "${targetBranch}" ]; then
+            echo "> Error: Branch error"
+            return 1
+        fi
+
+        #updateMemory "null"
+    else
+        updateMemory "${currentBranch}"
+    fi
+
+    doBranchSwap "${memorizedBranch}" "${currentBranch}"
+
+    # TODO: If this fails, config option xzero.branch_swap.last will be erased anyway
+}
+
+main "${@}"
